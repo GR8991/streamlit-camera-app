@@ -10,14 +10,34 @@ load_dotenv()
 
 st.set_page_config(page_title="Chat App", layout="wide", initial_sidebar_state="expanded")
 
-# Initialize Firebase
-if not firebase_admin.get_app():
+# Initialize Firebase with proper error handling
+firebase_initialized = False
+
+try:
+    # Check if Firebase is already initialized
+    firebase_app = firebase_admin.get_app()
+    firebase_initialized = True
+except ValueError:
+    # Firebase not initialized, do it now
     try:
+        firebase_project_id = os.getenv("FIREBASE_PROJECT_ID")
+        
+        if not firebase_project_id:
+            st.error("❌ Firebase credentials not found!")
+            st.info("""
+            **Setup Instructions:**
+            1. Go to Firebase Console
+            2. Get your Service Account Key (JSON)
+            3. Create a `.env` file with your credentials
+            4. Add to Streamlit Cloud Secrets
+            """)
+            st.stop()
+        
         cred = credentials.Certificate({
             "type": "service_account",
             "project_id": os.getenv("FIREBASE_PROJECT_ID"),
             "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID"),
-            "private_key": os.getenv("FIREBASE_PRIVATE_KEY").replace('\\n', '\n'),
+            "private_key": os.getenv("FIREBASE_PRIVATE_KEY", "").replace('\\n', '\n'),
             "client_email": os.getenv("FIREBASE_CLIENT_EMAIL"),
             "client_id": os.getenv("FIREBASE_CLIENT_ID"),
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
@@ -29,8 +49,11 @@ if not firebase_admin.get_app():
         firebase_admin.initialize_app(cred, {
             'databaseURL': os.getenv("FIREBASE_DATABASE_URL")
         })
+        firebase_initialized = True
+        
     except Exception as e:
-        st.error(f"Firebase initialization error: {e}")
+        st.error(f"❌ Firebase Error: {str(e)}")
+        st.stop()
 
 # Title
 st.title("💬 Streamlit Chat App")
@@ -78,6 +101,9 @@ st.subheader(f"💬 Chat with {recipient}")
 # Fetch messages from Firebase
 def get_messages():
     try:
+        if not firebase_initialized:
+            return []
+        
         ref = db.reference(f"chats/{username}_{recipient}")
         messages = ref.get() or {}
         
@@ -133,27 +159,31 @@ with col2:
 
 # Send message
 if send_button and message:
-    try:
-        timestamp = datetime.now().timestamp()
-        
-        # Store message in Firebase
-        chat_path = f"chats/{username}_{recipient}"
-        msg_ref = db.reference(chat_path)
-        
-        new_msg = {
-            'sender': username,
-            'text': message,
-            'timestamp': timestamp
-        }
-        
-        # Push message to Firebase
-        msg_ref.push(new_msg)
-        
-        st.success("✅ Message sent!")
-        st.rerun()
-        
-    except Exception as e:
-        st.error(f"❌ Error sending message: {e}")
+    if not firebase_initialized:
+        st.error("❌ Firebase not initialized. Check your credentials.")
+    else:
+        try:
+            timestamp = datetime.now().timestamp()
+            
+            # Store message in Firebase
+            chat_path = f"chats/{username}_{recipient}"
+            msg_ref = db.reference(chat_path)
+            
+            new_msg = {
+                'sender': username,
+                'text': message,
+                'timestamp': timestamp
+            }
+            
+            # Push message to Firebase
+            msg_ref.push(new_msg)
+            
+            st.success("✅ Message sent!")
+            time.sleep(1)
+            st.rerun()
+            
+        except Exception as e:
+            st.error(f"❌ Error sending message: {str(e)}")
 
 # Auto-refresh using Streamlit's built-in mechanism
 if 'last_refresh' not in st.session_state:
