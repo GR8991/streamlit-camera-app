@@ -1,34 +1,36 @@
 import streamlit as st
 import firebase_admin
-from firebase_admin import db
+from firebase_admin import db, credentials
 from datetime import datetime
 import time
-from streamlit_autorefresh import rerun_script
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
+st.set_page_config(page_title="Chat App", layout="wide", initial_sidebar_state="expanded")
+
 # Initialize Firebase
 if not firebase_admin.get_app():
-    cred = firebase_admin.credentials.Certificate({
-        "type": "service_account",
-        "project_id": os.getenv("FIREBASE_PROJECT_ID"),
-        "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID"),
-        "private_key": os.getenv("FIREBASE_PRIVATE_KEY").replace('\\n', '\n'),
-        "client_email": os.getenv("FIREBASE_CLIENT_EMAIL"),
-        "client_id": os.getenv("FIREBASE_CLIENT_ID"),
-        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-        "token_uri": "https://oauth2.googleapis.com/token",
-        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-        "client_x509_cert_url": os.getenv("FIREBASE_CERT_URL")
-    })
-    
-    firebase_admin.initialize_app(cred, {
-        'databaseURL': os.getenv("FIREBASE_DATABASE_URL")
-    })
-
-st.set_page_config(page_title="Chat App", layout="wide", initial_sidebar_state="expanded")
+    try:
+        cred = credentials.Certificate({
+            "type": "service_account",
+            "project_id": os.getenv("FIREBASE_PROJECT_ID"),
+            "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID"),
+            "private_key": os.getenv("FIREBASE_PRIVATE_KEY").replace('\\n', '\n'),
+            "client_email": os.getenv("FIREBASE_CLIENT_EMAIL"),
+            "client_id": os.getenv("FIREBASE_CLIENT_ID"),
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_x509_cert_url": os.getenv("FIREBASE_CERT_URL")
+        })
+        
+        firebase_admin.initialize_app(cred, {
+            'databaseURL': os.getenv("FIREBASE_DATABASE_URL")
+        })
+    except Exception as e:
+        st.error(f"Firebase initialization error: {e}")
 
 # Title
 st.title("💬 Streamlit Chat App")
@@ -37,8 +39,8 @@ st.title("💬 Streamlit Chat App")
 with st.sidebar:
     st.header("⚙️ User Setup")
     
-    username = st.text_input("Enter your name:", placeholder="e.g., John")
-    recipient = st.text_input("Friend's name:", placeholder="e.g., Jane")
+    username = st.text_input("Enter your name:", placeholder="e.g., John", key="username_input")
+    recipient = st.text_input("Friend's name:", placeholder="e.g., Jane", key="recipient_input")
     
     if username and recipient:
         st.success(f"✅ You: {username}")
@@ -57,9 +59,9 @@ with st.sidebar:
     
     st.divider()
     
-    # Auto-refresh
+    # Auto-refresh interval
     st.subheader("🔄 Auto-Refresh")
-    refresh_interval = st.slider("Refresh messages every (seconds):", 1, 10, 2)
+    refresh_interval = st.slider("Refresh every (seconds):", 1, 10, 2, key="refresh_slider")
     
     st.divider()
     
@@ -73,8 +75,6 @@ if not username or not recipient:
 # Display chat messages
 st.subheader(f"💬 Chat with {recipient}")
 
-chat_container = st.container()
-
 # Fetch messages from Firebase
 def get_messages():
     try:
@@ -84,35 +84,39 @@ def get_messages():
         # Sort messages by timestamp
         sorted_messages = sorted(messages.items(), key=lambda x: x[1].get('timestamp', 0))
         return sorted_messages
-    except:
+    except Exception as e:
+        st.warning(f"Error fetching messages: {e}")
         return []
 
-# Display messages
-with chat_container:
-    messages = get_messages()
-    
-    if messages:
-        for msg_id, msg_data in messages:
-            sender = msg_data.get('sender', 'Unknown')
-            text = msg_data.get('text', '')
-            timestamp = msg_data.get('timestamp', '')
-            
-            # Format timestamp
-            try:
-                time_obj = datetime.fromtimestamp(timestamp)
-                time_str = time_obj.strftime("%H:%M")
-            except:
-                time_str = "Now"
-            
-            # Display message
-            if sender == username:
-                # Your message (right side)
-                st.chat_message("user").write(f"**{text}**\n\n*{time_str}*")
-            else:
-                # Friend's message (left side)
-                st.chat_message("assistant").write(f"**{text}**\n\n*{time_str}*")
-    else:
-        st.info("📝 No messages yet. Start a conversation!")
+# Display messages in a container
+messages = get_messages()
+
+if messages:
+    for msg_id, msg_data in messages:
+        sender = msg_data.get('sender', 'Unknown')
+        text = msg_data.get('text', '')
+        timestamp = msg_data.get('timestamp', '')
+        
+        # Format timestamp
+        try:
+            time_obj = datetime.fromtimestamp(timestamp)
+            time_str = time_obj.strftime("%H:%M")
+        except:
+            time_str = "Now"
+        
+        # Display message
+        if sender == username:
+            # Your message (right side)
+            with st.chat_message("user"):
+                st.write(f"**{text}**")
+                st.caption(time_str)
+        else:
+            # Friend's message (left side)
+            with st.chat_message("assistant"):
+                st.write(f"**{text}**")
+                st.caption(time_str)
+else:
+    st.info("📝 No messages yet. Start a conversation!")
 
 st.divider()
 
@@ -122,7 +126,7 @@ st.subheader("Send Message")
 col1, col2 = st.columns([4, 1])
 
 with col1:
-    message = st.text_input("Type your message:", placeholder="Say something...")
+    message = st.text_input("Type your message:", placeholder="Say something...", key="message_input")
 
 with col2:
     send_button = st.button("Send 📤", use_container_width=True)
@@ -132,7 +136,7 @@ if send_button and message:
     try:
         timestamp = datetime.now().timestamp()
         
-        # Store message in both directions for easy retrieval
+        # Store message in Firebase
         chat_path = f"chats/{username}_{recipient}"
         msg_ref = db.reference(chat_path)
         
@@ -142,7 +146,7 @@ if send_button and message:
             'timestamp': timestamp
         }
         
-        # Push message
+        # Push message to Firebase
         msg_ref.push(new_msg)
         
         st.success("✅ Message sent!")
@@ -151,8 +155,7 @@ if send_button and message:
     except Exception as e:
         st.error(f"❌ Error sending message: {e}")
 
-# Auto-refresh
-import streamlit as st
+# Auto-refresh using Streamlit's built-in mechanism
 if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = time.time()
 
